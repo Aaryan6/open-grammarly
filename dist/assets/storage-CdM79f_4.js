@@ -1,0 +1,1 @@
+const s={openRouterKey:"",selectedModel:"openrouter/free",enabled:!0,aggressiveness:.5,mode:"professional"};async function n(){const e=(await chrome.storage.local.get("settings")).settings||{};return{...s,...e}}async function o(t){const e=await n();await chrome.storage.local.set({settings:{...e,...t}})}export{s as D,n as g,o as s};

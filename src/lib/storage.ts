@@ -8,7 +8,7 @@ export interface Settings {
 
 export const DEFAULT_SETTINGS: Settings = {
   openRouterKey: '',
-  selectedModel: 'openai/gpt-oss-safeguard-20b',
+  selectedModel: 'openrouter/free',
   enabled: true,
   aggressiveness: 0.5,
   mode: 'professional',

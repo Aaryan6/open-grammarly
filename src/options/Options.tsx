@@ -9,9 +9,9 @@ export default function Options() {
   useEffect(() => {
     getSettings().then(s => {
       // Ensure the selected model is valid/supported
-      if (s.selectedModel !== 'openai/gpt-oss-safeguard-20b') {
-        s.selectedModel = 'openai/gpt-oss-safeguard-20b';
-        saveSettings({ selectedModel: 'openai/gpt-oss-safeguard-20b' });
+      if (s.selectedModel !== 'openrouter/free') {
+        s.selectedModel = 'openrouter/free';
+        saveSettings({ selectedModel: 'openrouter/free' });
       }
       setSettings(s);
     });
@@ -89,7 +89,7 @@ export default function Options() {
                       value={settings.selectedModel}
                       onChange={(e) => setSettings({ ...settings, selectedModel: e.target.value })}
                     >
-                      <option value="openai/gpt-oss-safeguard-20b">GPT OSS Safeguard 20B</option>
+                      <option value="openrouter/free">OpenRouter Free</option>
                     </select>
                     <div className="absolute right-3 top-1/2 -translate-y-1/2 pointer-events-none">
                       <svg className="w-4 h-4 text-gray-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">

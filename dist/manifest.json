@@ -10,12 +10,10 @@
   },
   "permissions": [
     "storage",
-    "activeTab",
-    "scripting",
     "contextMenus"
   ],
   "host_permissions": [
-    "<all_urls>"
+    "https://openrouter.ai/*"
   ],
   "background": {
     "service_worker": "service-worker-loader.js",

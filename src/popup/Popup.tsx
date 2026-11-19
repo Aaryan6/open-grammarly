@@ -3,7 +3,7 @@ import { getSettings, saveSettings } from '../lib/storage';
 import { Settings as SettingsIcon, Sparkles, Check, AlertTriangle } from 'lucide-react';
 
 const MODEL_NAMES: Record<string, string> = {
-  'openai/gpt-oss-safeguard-20b': 'GPT OSS Safeguard',
+  'openrouter/free': 'OpenRouter Free',
   'google/gemini-pro': 'Gemini Pro',
   'google/gemini-flash': 'Gemini Flash',
   // Add other mappings as needed
