@@ -1,6 +1,9 @@
 import { analyzeText } from '../lib/openrouter';
 import { getSettings } from '../lib/storage';
 
+// Purge text history stored by earlier versions
+chrome.storage.local.remove('history');
+
 chrome.runtime.onInstalled.addListener(() => {
   chrome.contextMenus.create({
     id: 'analyzeSelection',
@@ -9,17 +12,10 @@ chrome.runtime.onInstalled.addListener(() => {
   });
 });
 
-chrome.contextMenus.onClicked.addListener(async (info, tab) => {
-  if (info.menuItemId === 'analyzeSelection' && info.selectionText && tab?.id) {
-    try {
-      const results = await handleAnalysis(info.selectionText);
-      chrome.tabs.sendMessage(tab.id, {
-        type: 'SHOW_ANALYSIS_RESULTS',
-        data: results
-      });
-    } catch (err) {
-      // Silent fail
-    }
+chrome.contextMenus.onClicked.addListener((info, tab) => {
+  if (info.menuItemId === 'analyzeSelection' && tab?.id != null) {
+    // Same path as the popup's Run Analysis button; the focused field in the page is analyzed
+    chrome.tabs.sendMessage(tab.id, { type: 'RUN_ANALYSIS_NOW' }).catch(() => {});
   }
 });
 
@@ -44,15 +40,22 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
 async function handleAnalysis(text: string) {
   try {
     const settings = await getSettings();
-    if (!settings.openRouterKey) {
-      return { success: false, error: 'API key not set. Please open extension options and enter your OpenRouter key.' };
+    const key = settings.provider === 'google' ? settings.googleKey : settings.openRouterKey;
+    if (!key) {
+      const name = settings.provider === 'google' ? 'Google AI' : 'OpenRouter';
+      return { success: false, error: `API key not set. Please open extension options and enter your ${name} key.` };
     }
     if (!settings.enabled) {
       return { success: false, error: 'Extension is disabled' };
     }
     const results = await analyzeText(text, settings);
+    await recordStats(results);
     return { success: true, data: results };
   } catch (error: any) {
     return { success: false, error: error.message };
   }
+}
+
+async function recordStats(results: { overallScore: number }) {
+  await chrome.storage.local.set({ stats: { lastScore: results.overallScore } });
 }

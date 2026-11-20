@@ -275,6 +275,10 @@ export class UIInjector {
     }
   }
 
+  public getCorrections(element: HTMLElement): Correction[] {
+    return this.activeElements.get(this.getElementId(element))?.corrections ?? [];
+  }
+
   private clearHighlights(element: HTMLElement) {
     const elementId = this.getElementId(element);
     this.shadowRoot.querySelectorAll(`.og-underline[data-element-id="${elementId}"], .og-textarea-badge[data-element-id="${elementId}"]`).forEach(el => el.remove());
@@ -312,7 +316,7 @@ export class UIInjector {
         underline.onmouseenter = (e) => {
           e.stopPropagation();
           this.showHighlight(rangeRects);
-          this.showTooltip(correction, r.left, r.bottom, onApply);
+          this.showTooltip(element, correction, r.left, r.bottom, onApply);
         };
         
         this.shadowRoot.appendChild(underline);
@@ -326,6 +330,24 @@ export class UIInjector {
     
     if (corrections.length === 0) return;
 
+    corrections.forEach(correction => {
+      const rects = this.getInputRects(element, correction.start, correction.end);
+      rects.forEach(r => {
+        const underline = document.createElement('div');
+        underline.className = `og-underline og-${correction.type}`;
+        underline.dataset.elementId = elementId;
+        underline.style.left = `${r.left}px`;
+        underline.style.top = `${r.bottom - 2}px`;
+        underline.style.width = `${r.width}px`;
+        underline.onmouseenter = (e) => {
+          e.stopPropagation();
+          this.showHighlight(rects);
+          this.showTooltip(element, correction, r.left, r.bottom, onApply);
+        };
+        this.shadowRoot.appendChild(underline);
+      });
+    });
+
     const badge = document.createElement('div');
     badge.className = 'og-textarea-badge';
     badge.dataset.elementId = elementId;
@@ -335,10 +357,47 @@ export class UIInjector {
     
     badge.onmouseenter = (e) => {
       e.stopPropagation();
-      this.showTooltip(corrections[0], rect.left, rect.bottom, onApply);
+      this.showTooltip(element, corrections[0], rect.left, rect.bottom, onApply);
     };
 
     this.shadowRoot.appendChild(badge);
+  }
+
+  // Measures text positions in a textarea/input by rendering the same text in a hidden mirror element
+  private getInputRects(element: HTMLTextAreaElement | HTMLInputElement, start: number, end: number): DOMRect[] {
+    const isInput = element instanceof HTMLInputElement;
+    const cs = getComputedStyle(element);
+    const mirror = document.createElement('div');
+    const props = ['boxSizing', 'width', 'height', 'borderTopWidth', 'borderRightWidth', 'borderBottomWidth', 'borderLeftWidth',
+      'borderStyle', 'paddingTop', 'paddingRight', 'paddingBottom', 'paddingLeft', 'fontFamily', 'fontSize', 'fontWeight',
+      'fontStyle', 'fontVariant', 'letterSpacing', 'lineHeight', 'textTransform', 'textIndent', 'wordSpacing', 'tabSize', 'direction'] as const;
+    props.forEach(p => { (mirror.style as any)[p] = (cs as any)[p]; });
+    const rect = element.getBoundingClientRect();
+    mirror.style.position = 'fixed';
+    mirror.style.left = `${rect.left}px`;
+    mirror.style.top = `${rect.top}px`;
+    mirror.style.visibility = 'hidden';
+    mirror.style.pointerEvents = 'none';
+    mirror.style.overflow = 'hidden';
+    mirror.style.whiteSpace = isInput ? 'pre' : 'pre-wrap';
+    mirror.style.wordWrap = 'break-word';
+
+    const value = element.value;
+    const before = document.createTextNode(value.substring(0, start));
+    const target = document.createElement('span');
+    target.textContent = value.substring(start, end) || '\u200b';
+    const after = document.createTextNode(value.substring(end));
+    mirror.append(before, target, after);
+    document.body.appendChild(mirror);
+    mirror.scrollTop = element.scrollTop;
+    mirror.scrollLeft = element.scrollLeft;
+
+    const clip = rect;
+    const rects = Array.from(target.getClientRects())
+      .filter(r => r.width > 0 && r.bottom > clip.top && r.top < clip.bottom && r.right > clip.left && r.left < clip.right)
+      .map(r => new DOMRect(r.left, r.top, r.width, r.height));
+    mirror.remove();
+    return rects;
   }
 
   private getRangeForIndices(element: HTMLElement, start: number, end: number): Range | null {
@@ -383,7 +442,7 @@ export class UIInjector {
     return null;
   }
 
-  private showTooltip(correction: Correction, x: number, y: number, onApply: (c: Correction) => void) {
+  private showTooltip(element: HTMLElement, correction: Correction, x: number, y: number, onApply: (c: Correction) => void) {
     this.closeTooltip();
 
     const tooltip = document.createElement('div');
@@ -393,14 +452,14 @@ export class UIInjector {
 
     // Generate title based on correction type
     const title = correction.type === 'spelling' 
-      ? 'Use the right word' 
+      ? 'Spelling mistake' 
       : correction.type === 'grammar' 
-        ? 'Punctuation problem' 
+        ? 'Grammar issue' 
         : correction.explanation || 'Suggestion';
 
     tooltip.innerHTML = `
-      <div class="og-title">${title}</div>
-      <div class="og-suggestion">${correction.suggestion}</div>
+      <div class="og-title">${this.escapeHtml(title)}</div>
+      <div class="og-suggestion">${this.escapeHtml(correction.suggestion)}</div>
       <div class="og-dismiss">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
           <path d="M3 6h18M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/>
@@ -416,6 +475,7 @@ export class UIInjector {
 
     tooltip.querySelector('.og-dismiss')?.addEventListener('click', () => {
       this.closeTooltip();
+      this.highlightCorrections(element, this.getCorrections(element).filter(c => c !== correction), onApply);
     });
 
     this.shadowRoot.appendChild(tooltip);
@@ -428,6 +488,10 @@ export class UIInjector {
     if (rect.bottom > window.innerHeight) {
       tooltip.style.top = `${y - rect.height - 8}px`;
     }
+  }
+
+  private escapeHtml(text: string): string {
+    return text.replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]!));
   }
 
   private closeTooltip() {
@@ -466,7 +530,7 @@ export class UIInjector {
     const toast = document.createElement('div');
     toast.className = `og-toast og-${type}`;
 
-    let html = `<span>${message}</span>`;
+    let html = `<span>${this.escapeHtml(message)}</span>`;
     
     if (options?.action && options?.onAction) {
       html += `<button class="og-toast-action">${options.action}</button>`;

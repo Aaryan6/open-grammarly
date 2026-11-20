@@ -9,7 +9,7 @@
     "128": "icons/icon128.png"
   },
   "permissions": ["storage", "contextMenus"],
-  "host_permissions": ["https://openrouter.ai/*"],
+  "host_permissions": ["https://openrouter.ai/*", "https://generativelanguage.googleapis.com/*"],
   "background": {
     "service_worker": "src/background/index.ts",
     "type": "module"
@@ -23,7 +23,8 @@
     {
       "matches": ["<all_urls>"],
       "js": ["src/content/index.ts"],
-      "run_at": "document_idle"
+      "run_at": "document_idle",
+      "all_frames": true
     }
   ],
   "web_accessible_resources": [

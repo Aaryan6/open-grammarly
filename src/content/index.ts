@@ -1,15 +1,18 @@
 import { observeDOM, TextField } from './dom-observer';
 import { UIInjector } from './ui-injector';
 import { Correction } from '../lib/openrouter';
+import { getSettings } from '../lib/storage';
 
 const analyzedFields = new Set<TextField>();
 const ui = new UIInjector();
+let applying = false;
+let lastFocused: TextField | null = null;
 
 function handleInput(event: Event) {
   const target = event.target as TextField;
   
-  // Clear highlights immediately on any input change
-  ui.highlightCorrections(target, [], () => {});
+  // Clear highlights on user edits, but keep them when we applied a suggestion ourselves
+  if (!applying) ui.highlightCorrections(target, [], () => {});
   
   analyzeField(target);
 }
@@ -24,7 +27,7 @@ function handlePaste(event: Event) {
   setTimeout(() => analyzeField(target), 100);
 }
 
-function analyzeField(target: TextField) {
+async function analyzeField(target: TextField) {
   const text = target instanceof HTMLInputElement || target instanceof HTMLTextAreaElement 
     ? target.value 
     : (target as HTMLElement).innerText;
@@ -34,44 +37,76 @@ function analyzeField(target: TextField) {
     return;
   }
 
+  const call = ((target as any)._analysisCall ?? 0) + 1;
+  (target as any)._analysisCall = call;
   const timeoutId = (target as any)._analysisTimeout;
   if (timeoutId) clearTimeout(timeoutId);
 
-  (target as any)._analysisTimeout = setTimeout(async () => {
-    const response = await chrome.runtime.sendMessage({
-      type: 'ANALYZE_TEXT',
-      text
-    });
+  let delayMs = 5000;
+  try {
+    delayMs = (await getSettings()).debounceSeconds * 1000;
+  } catch {
+    // Extension context invalidated; keep default
+  }
+  // Drop this call if a newer one started while settings were loading
+  if ((target as any)._analysisCall !== call) return;
 
-    if (response.success) {
-      ui.highlightCorrections(target, response.data.corrections, (correction) => {
-        applyCorrection(target, correction);
+  (target as any)._analysisTimeout = setTimeout(() => runAnalysis(target, text), delayMs);
+}
+
+async function runAnalysis(target: TextField, text: string) {
+  let response: any;
+  try {
+    response = await chrome.runtime.sendMessage({ type: 'ANALYZE_TEXT', text });
+  } catch {
+    return; // Extension was reloaded or service worker unavailable
+  }
+  if (!response) return;
+
+  if (response.success) {
+    ui.highlightCorrections(target, response.data.corrections, (correction) => {
+      applyCorrection(target, correction);
+    });
+  } else {
+    // Show toast notification for errors
+    if (response.error?.includes('API key')) {
+      ui.showToast('API key not configured', 'error', {
+        action: 'Open Settings',
+        onAction: () => {
+          chrome.runtime.sendMessage({ type: 'OPEN_OPTIONS' });
+        }
       });
+    } else if (response.error?.includes('disabled')) {
+      // Silent - extension is disabled
     } else {
-      // Show toast notification for errors
-      if (response.error?.includes('API key')) {
-        ui.showToast('API key not configured', 'error', {
-          action: 'Open Settings',
-          onAction: () => {
-            chrome.runtime.sendMessage({ type: 'OPEN_OPTIONS' });
-          }
-        });
-      } else if (response.error?.includes('disabled')) {
-        // Silent - extension is disabled
-      } else {
-        ui.showToast(`Analysis failed: ${response.error}`, 'error');
-      }
+      ui.showToast(`Analysis failed: ${response.error}`, 'error');
     }
-  }, 1000);
+  }
 }
 
 function applyCorrection(target: TextField, correction: Correction) {
+  const others = ui.getCorrections(target).filter(c => c !== correction);
+  applying = true;
+  const applied = replaceText(target, correction);
+  applying = false;
+  if (!applied) return;
+
+  // Keep the remaining suggestions, shifted by the length change; drop overlapping ones
+  const delta = correction.suggestion.length - (correction.end - correction.start);
+  const remaining = others
+    .filter(c => c.end <= correction.start || c.start >= correction.end)
+    .map(c => c.start >= correction.end ? { ...c, start: c.start + delta, end: c.end + delta } : c);
+  ui.highlightCorrections(target, remaining, (c) => applyCorrection(target, c));
+}
+
+function replaceText(target: TextField, correction: Correction): boolean {
   if (target instanceof HTMLInputElement || target instanceof HTMLTextAreaElement) {
     // For input/textarea - use exact position from correction
     const val = target.value;
     const newVal = val.substring(0, correction.start) + correction.suggestion + val.substring(correction.end);
     target.value = newVal;
     target.dispatchEvent(new Event('input', { bubbles: true }));
+    return true;
   } else {
     // For contenteditable - find and replace only the specific text
     try {
@@ -91,7 +126,7 @@ function applyCorrection(target: TextField, correction: Correction) {
         const foundIndex = searchArea.indexOf(correction.original);
         
         if (foundIndex === -1) {
-          return; // Can't find the text
+          return false; // Can't find the text
         }
         startIndex = searchStart + foundIndex;
       }
@@ -99,11 +134,11 @@ function applyCorrection(target: TextField, correction: Correction) {
       // Use Selection API to select only the specific text and replace it
       // This preserves undo stack better than replacing all content
       const selection = window.getSelection();
-      if (!selection) return;
+      if (!selection) return false;
       
       // Find the text node and offset for the correction
       const result = findTextNodeAtPosition(target, startIndex, startIndex + correction.original.length);
-      if (!result) return;
+      if (!result) return false;
       
       const range = document.createRange();
       range.setStart(result.startNode, result.startOffset);
@@ -116,14 +151,11 @@ function applyCorrection(target: TextField, correction: Correction) {
       document.execCommand('insertText', false, correction.suggestion);
       
       target.dispatchEvent(new Event('input', { bubbles: true }));
+      return true;
     } catch (error) {
-      // Silent fail
+      return false;
     }
   }
-  
-  // Clear highlights and re-analyze after a short delay
-  ui.highlightCorrections(target, [], () => {});
-  setTimeout(() => analyzeField(target), 500);
 }
 
 // Helper function to find text node at a specific character position
@@ -163,18 +195,23 @@ function findTextNodeAtPosition(element: HTMLElement, start: number, end: number
 }
 
 chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
-  if (request.type === 'SHOW_ANALYSIS_RESULTS') {
-    if (request.data.success) {
-      const focused = document.activeElement as HTMLElement;
-      if (focused && (isTextField(focused) || analyzedFields.has(focused as TextField))) {
-        ui.highlightCorrections(focused, request.data.data.corrections, (c) => applyCorrection(focused as TextField, c));
-      } else {
-        const lastField = Array.from(analyzedFields).pop();
-        if (lastField) {
-          ui.highlightCorrections(lastField, request.data.data.corrections, (c) => applyCorrection(lastField, c));
-        }
-      }
+  if (request.type === 'RUN_ANALYSIS_NOW') {
+    const active = document.activeElement as HTMLElement | null;
+    const focused = active && isTextField(active) ? active : lastFocused;
+    if (!focused || !document.contains(focused)) return; // Only the frame holding a field responds
+    const text = focused instanceof HTMLInputElement || focused instanceof HTMLTextAreaElement
+      ? focused.value
+      : focused.innerText;
+    if (text.length < 5) {
+      sendResponse({ started: false, reason: 'short' });
+      return;
     }
+    const timeoutId = (focused as any)._analysisTimeout;
+    if (timeoutId) clearTimeout(timeoutId);
+    (focused as any)._analysisCall = ((focused as any)._analysisCall ?? 0) + 1;
+    runAnalysis(focused as TextField, text);
+    sendResponse({ started: true });
+    return;
   }
 });
 
@@ -188,7 +225,10 @@ observeDOM((el) => {
   
   el.addEventListener('input', handleInput);
   el.addEventListener('paste', handlePaste);
-  el.addEventListener('focus', () => analyzeField(el));
+  el.addEventListener('focus', () => {
+    lastFocused = el;
+    analyzeField(el);
+  });
   analyzedFields.add(el);
 });
 
