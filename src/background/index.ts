@@ -29,6 +29,16 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
     sendResponse({ success: true });
     return;
   }
+  if (request.type === 'FETCH_TEXT') {
+    // Export URLs redirect cross-origin, which content-script fetches can't follow
+    fetch(request.url, { credentials: 'include' })
+      .then(async (res) => {
+        if (!res.ok) return sendResponse({ success: false, error: `Could not read document (HTTP ${res.status})` });
+        sendResponse({ success: true, text: await res.text() });
+      })
+      .catch((e) => sendResponse({ success: false, error: e?.message || 'Fetch failed' }));
+    return true;
+  }
   if (request.type === 'ANALYZE_TEXT') {
     handleAnalysis(request.text).then(response => {
       sendResponse(response);

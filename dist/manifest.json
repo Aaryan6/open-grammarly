@@ -14,7 +14,9 @@
   ],
   "host_permissions": [
     "https://openrouter.ai/*",
-    "https://generativelanguage.googleapis.com/*"
+    "https://generativelanguage.googleapis.com/*",
+    "https://docs.google.com/*",
+    "https://*.googleusercontent.com/*"
   ],
   "background": {
     "service_worker": "service-worker-loader.js",
@@ -28,7 +30,7 @@
   "content_scripts": [
     {
       "js": [
-        "assets/index.ts-loader-BvwOtHxc.js"
+        "assets/index.ts-loader-C3gp9fDN.js"
       ],
       "matches": [
         "<all_urls>"
@@ -45,7 +47,7 @@
       "resources": [
         "assets/*",
         "assets/storage-BKXZSGVt.js",
-        "assets/index.ts-DKvSF7Cg.js"
+        "assets/index.ts-BDqPNQa6.js"
       ],
       "use_dynamic_url": false
     }

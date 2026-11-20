@@ -2,6 +2,7 @@ import { observeDOM, TextField } from './dom-observer';
 import { UIInjector } from './ui-injector';
 import { Correction } from '../lib/openrouter';
 import { getSettings } from '../lib/storage';
+import { initGoogleWorkspace } from './google-workspace';
 
 const analyzedFields = new Set<TextField>();
 const ui = new UIInjector();
@@ -231,6 +232,16 @@ observeDOM((el) => {
   });
   analyzedFields.add(el);
 });
+
+if (window === window.top) {
+  initGoogleWorkspace(async (text) => {
+    try {
+      return await chrome.runtime.sendMessage({ type: 'ANALYZE_TEXT', text });
+    } catch {
+      return { success: false, error: 'Extension was reloaded; refresh the page.' };
+    }
+  });
+}
 
 // Test connection to background
 chrome.runtime.sendMessage({ type: 'PING' }, () => {
