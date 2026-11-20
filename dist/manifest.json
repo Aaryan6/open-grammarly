@@ -30,7 +30,7 @@
   "content_scripts": [
     {
       "js": [
-        "assets/index.ts-loader-9mRqKIK9.js"
+        "assets/index.ts-loader-oP_ZkOoP.js"
       ],
       "matches": [
         "<all_urls>"
@@ -47,7 +47,7 @@
       "resources": [
         "assets/*",
         "assets/storage-BDjIbO7L.js",
-        "assets/index.ts-BKDmF81c.js"
+        "assets/index.ts-B4PTI_k3.js"
       ],
       "use_dynamic_url": false
     }

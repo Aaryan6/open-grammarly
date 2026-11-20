@@ -10,6 +10,7 @@ let applying = false;
 let lastFocused: TextField | null = null;
 let checkButton: HTMLElement | null = null;
 let badge: HTMLElement | null = null;
+let hiddenForPage = false;
 
 function setBadge(count: number | 'loading' | null) {
   if (!badge) return;
@@ -24,7 +25,7 @@ const isGoogleDoc = location.hostname === 'docs.google.com'
 
 // Floating button (top frame only) to launch the analysis manually; Google Docs has its own panel
 function showCheckButton() {
-  if (checkButton || isGoogleDoc || window !== window.top) return;
+  if (checkButton || hiddenForPage || isGoogleDoc || window !== window.top) return;
   const host = document.createElement('div');
   host.style.cssText = 'position:fixed;right:16px;bottom:16px;z-index:2147483647;';
   const root = host.attachShadow({ mode: 'closed' });
@@ -33,10 +34,18 @@ function showCheckButton() {
     .badge.spin { color:transparent; border-color:#15c39a; border-top-color:#d6f5ee; animation:og-spin .8s linear infinite; }
     @keyframes og-spin { to { transform:rotate(360deg); } }
     .wrap { position:relative; display:inline-block; }
+    .hide { position:absolute; top:-8px; left:-8px; width:18px; height:18px; padding:0; border-radius:50%; background:#fff; color:#202124; border:1px solid #bbb; font:700 12px/16px system-ui,sans-serif; box-shadow:0 1px 3px rgba(0,0,0,.3); display:none; }
+    .wrap:hover .hide { display:block; }
     .badge { position:absolute; top:-6px; right:-6px; min-width:20px; height:20px; padding:0 5px; border-radius:999px; background:#fff; color:#202124; border:2px solid #15c39a; font:700 11px/16px system-ui,sans-serif; text-align:center; box-sizing:border-box; display:none; }
-  </style><div class="wrap"><button>Check Grammar</button><span class="badge"></span></div>`;
+  </style><div class="wrap"><button class="main">Check Grammar</button><span class="badge"></span><button class="hide" title="Hide until page reload" aria-label="Hide">×</button></div>`;
   badge = root.querySelector<HTMLElement>('.badge');
-  const button = root.querySelector('button')!;
+  const button = root.querySelector('button.main')!;
+  const hideBtn = root.querySelector<HTMLElement>('button.hide')!;
+  hideBtn.addEventListener('mousedown', (e) => e.preventDefault());
+  hideBtn.addEventListener('click', () => {
+    host.remove();
+    hiddenForPage = true;
+  });
   // Keep focus in the text field so it stays the analysis target
   button.addEventListener('mousedown', (e) => e.preventDefault());
   button.addEventListener('click', () => {
@@ -157,33 +166,42 @@ function replaceText(target: TextField, correction: Correction): boolean {
     // For input/textarea - use exact position from correction
     const val = target.value;
     const newVal = val.substring(0, correction.start) + correction.suggestion + val.substring(correction.end);
-    target.value = newVal;
-    target.dispatchEvent(new Event('input', { bubbles: true }));
+    // Frameworks (e.g. Oracle JET/Preact) listen to real user input events, so simulate typing first
+    target.focus();
+    target.setSelectionRange(correction.start, correction.end);
+    let inserted = false;
+    try {
+      inserted = document.execCommand('insertText', false, correction.suggestion);
+    } catch {
+      inserted = false;
+    }
+    if (inserted && target.value === newVal) return true;
+    // Fallback: native setter bypasses framework-patched value properties
+    const proto = target instanceof HTMLTextAreaElement ? HTMLTextAreaElement.prototype : HTMLInputElement.prototype;
+    Object.getOwnPropertyDescriptor(proto, 'value')?.set?.call(target, newVal);
+    target.dispatchEvent(new InputEvent('input', { bubbles: true, inputType: 'insertText', data: correction.suggestion }));
+    target.dispatchEvent(new Event('change', { bubbles: true }));
     return true;
   } else {
     // For contenteditable - find and replace only the specific text
     try {
-      const currentText = target.innerText || target.textContent || '';
-      
-      // Verify the text at the specified position matches
-      const textAtPosition = currentText.substring(correction.start, correction.end);
-      
-      // Use the exact position from the correction
+      // Offsets match the text nodes (same space the underlines use); innerText can differ (e.g. paragraph breaks)
+      const walker = document.createTreeWalker(target, NodeFilter.SHOW_TEXT, null);
+      let currentText = '';
+      let n: Node | null;
+      while ((n = walker.nextNode())) currentText += n.textContent ?? '';
+      const norm = (t: string) => t.replace(/\u00a0/g, ' ');
       let startIndex = correction.start;
-      
-      // If the text doesn't match at the expected position, try to find it nearby
-      if (textAtPosition !== correction.original) {
-        const searchStart = Math.max(0, correction.start - 10);
-        const searchEnd = Math.min(currentText.length, correction.end + 10);
-        const searchArea = currentText.substring(searchStart, searchEnd);
-        const foundIndex = searchArea.indexOf(correction.original);
-        
-        if (foundIndex === -1) {
-          return false; // Can't find the text
+      if (norm(currentText.substring(correction.start, correction.end)) !== norm(correction.original)) {
+        const searchStart = Math.max(0, correction.start - 50);
+        const found = norm(currentText).indexOf(norm(correction.original), searchStart);
+        if (found === -1 || found > correction.end + 50) {
+          console.warn('[open-grammarly] could not locate text to replace', correction);
+          return false;
         }
-        startIndex = searchStart + foundIndex;
+        startIndex = found;
       }
-      
+
       // Use Selection API to select only the specific text and replace it
       // This preserves undo stack better than replacing all content
       const selection = window.getSelection();
@@ -191,21 +209,65 @@ function replaceText(target: TextField, correction: Correction): boolean {
       
       // Find the text node and offset for the correction
       const result = findTextNodeAtPosition(target, startIndex, startIndex + correction.original.length);
-      if (!result) return false;
+      if (!result) {
+        console.warn('[open-grammarly] no text node for range', correction);
+        return false;
+      }
       
       const range = document.createRange();
       range.setStart(result.startNode, result.startOffset);
       range.setEnd(result.endNode, result.endOffset);
       
+      // Clicking the tooltip may have moved focus away; the editor must be focused for insertText
+      target.focus();
       selection.removeAllRanges();
       selection.addRange(range);
       
-      // Use insertText to replace only the selected text (preserves undo)
-      document.execCommand('insertText', false, correction.suggestion);
-      
-      target.dispatchEvent(new Event('input', { bubbles: true }));
+      // Rich editors sync their model from the DOM selection asynchronously, so insert after a short delay
+      const before = target.innerText;
+      setTimeout(() => {
+        applying = true;
+        try {
+          target.focus();
+          selection.removeAllRanges();
+          selection.addRange(range);
+          let inserted = false;
+          try {
+            inserted = document.execCommand('insertText', false, correction.suggestion);
+          } catch {
+            inserted = false;
+          }
+          console.debug('[open-grammarly] insertText', inserted);
+          const changed = () => target.innerText !== before;
+          setTimeout(() => {
+            if (changed()) return;
+            // Editor ignored insertText: emulate pasting the suggestion, which most editors handle themselves
+            console.debug('[open-grammarly] trying paste');
+            applying = true;
+            target.focus();
+            selection.removeAllRanges();
+            selection.addRange(range);
+            const data = new DataTransfer();
+            data.setData('text/plain', correction.suggestion);
+            const pasteEvent = new ClipboardEvent('paste', { clipboardData: data, bubbles: true, cancelable: true });
+            const notHandled = target.dispatchEvent(pasteEvent);
+            applying = false;
+            setTimeout(() => {
+              if (changed() || !notHandled) return;
+              // Last resort: edit the DOM directly and notify the editor
+              console.debug('[open-grammarly] fallback DOM edit');
+              range.deleteContents();
+              range.insertNode(document.createTextNode(correction.suggestion));
+              target.dispatchEvent(new InputEvent('input', { bubbles: true, inputType: 'insertText', data: correction.suggestion }));
+            }, 200);
+          }, 200);
+        } finally {
+          applying = false;
+        }
+      }, 50);
       return true;
     } catch (error) {
+      console.warn('[open-grammarly] replace failed', error);
       return false;
     }
   }

@@ -133,6 +133,13 @@ export class UIInjector {
         padding: 12px 14px 8px;
         border-bottom: none;
       }
+      .og-explanation {
+        font-size: 12px;
+        font-style: italic;
+        color: #374151;
+        padding: 0 14px 8px;
+        line-height: 1.4;
+      }
       .og-suggestion {
         display: flex;
         align-items: center;
@@ -426,6 +433,7 @@ export class UIInjector {
 
     tooltip.innerHTML = `
       <div class="og-title">${this.escapeHtml(title)}</div>
+      ${correction.explanation ? `<div class="og-explanation">${this.escapeHtml(correction.explanation)}</div>` : ''}
       <div class="og-suggestion">${this.escapeHtml(correction.suggestion)}</div>
       <div class="og-dismiss">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
@@ -434,6 +442,9 @@ export class UIInjector {
         Dismiss
       </div>
     `;
+
+    // Keep focus/selection in the page's editor while clicking the tooltip
+    tooltip.addEventListener('mousedown', (e) => e.preventDefault());
 
     tooltip.querySelector('.og-suggestion')?.addEventListener('click', () => {
       onApply(correction);
