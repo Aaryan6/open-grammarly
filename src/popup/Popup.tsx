@@ -1,33 +1,25 @@
 import React, { useEffect, useState } from 'react';
 import { getSettings, saveSettings } from '../lib/storage';
-import { Settings as SettingsIcon, Sparkles, Check, AlertTriangle } from 'lucide-react';
-
-const MODEL_NAMES: Record<string, string> = {
-  'openai/gpt-oss-safeguard-20b': 'GPT OSS Safeguard',
-  'google/gemini-pro': 'Gemini Pro',
-  'google/gemini-flash': 'Gemini Flash',
-  // Add other mappings as needed
-};
+import { Settings as SettingsIcon, Sparkles } from 'lucide-react';
 
 export default function Popup() {
   const [enabled, setEnabled] = useState(true);
-  const [model, setModel] = useState('');
-  const [modelDisplay, setModelDisplay] = useState('');
+  const [runMessage, setRunMessage] = useState('');
+  const [hasKey, setHasKey] = useState(true);
+  const [stats, setStats] = useState<{ lastScore: number | null }>({ lastScore: null });
+
+  useEffect(() => {
+    const load = () => chrome.storage.local.get('stats').then(r => r.stats && setStats(r.stats as typeof stats));
+    load();
+    const listener = (_: unknown, area: string) => area === 'local' && load();
+    chrome.storage.onChanged.addListener(listener);
+    return () => chrome.storage.onChanged.removeListener(listener);
+  }, []);
 
   useEffect(() => {
     getSettings().then(s => {
       setEnabled(s.enabled);
-      const rawModel = s.selectedModel;
-      setModel(rawModel);
-      
-      // Better model name display logic
-      if (MODEL_NAMES[rawModel]) {
-        setModelDisplay(MODEL_NAMES[rawModel]);
-      } else {
-        // Fallback: strip prefix and capitalize
-        const name = rawModel.split('/').pop() || rawModel;
-        setModelDisplay(name.replace(/-/g, ' '));
-      }
+      setHasKey(!!(s.provider === 'google' ? s.googleKey : s.openRouterKey));
     });
   }, []);
 
@@ -35,6 +27,18 @@ export default function Popup() {
     const newState = !enabled;
     setEnabled(newState);
     await saveSettings({ enabled: newState });
+  };
+
+  const runAnalysisNow = async () => {
+    setRunMessage('');
+    try {
+      const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+      const res = tab?.id != null ? await chrome.tabs.sendMessage(tab.id, { type: 'RUN_ANALYSIS_NOW' }) : undefined;
+      if (res?.started) window.close();
+      else setRunMessage(res?.reason === 'short' ? 'Write a bit more text first.' : 'Click into a text field first.');
+    } catch {
+      setRunMessage('Click into a text field first. If you just reloaded the extension, reload this page too.');
+    }
   };
 
   const openOptions = () => {
@@ -62,7 +66,7 @@ export default function Popup() {
         <div className="status-row animate-in delay-1">
           <div className="status-left">
             <div className={`status-dot ${enabled ? 'active' : ''}`} />
-            <span className="status-label">Service Status</span>
+            <span className="status-label">{enabled ? 'Service Enabled' : 'Service Disabled'}</span>
           </div>
           <button
             onClick={toggleEnabled}
@@ -74,47 +78,20 @@ export default function Popup() {
         {/* Stats Grid */}
         <div className="stats-grid animate-in delay-2">
           <div className="stat-card">
-            <div className="stat-value">85</div>
+            <div className="stat-value">{stats.lastScore ?? '--'}</div>
             <div className="stat-label">Writing Score</div>
           </div>
-          <div className="stat-card relative overflow-hidden">
-             {/* Gradient overlay for text overflow if needed, or just better CSS */}
-            <div className="stat-value small truncate capitalize" title={model}>
-              {modelDisplay || 'Not set'}
-            </div>
-            <div className="stat-label">Current AI</div>
-          </div>
+          <button onClick={runAnalysisNow} disabled={!enabled} className="btn-primary">
+            Check Grammar
+          </button>
         </div>
+        {runMessage && <div className="section-title">{runMessage}</div>}
 
-        {/* Recent Session */}
-        <div className="session-section animate-in delay-3">
-          <div className="section-title">Recent Session</div>
-          <div className="session-list">
-            <div className="session-item">
-              <div className="session-left">
-                <div className="session-icon success">
-                  <Check size={14} strokeWidth={2.5} />
-                </div>
-                <span className="session-name">Grammar</span>
-              </div>
-              <span className="session-count">12 fixes</span>
-            </div>
-            <div className="session-item">
-              <div className="session-left">
-                <div className="session-icon warning">
-                  <AlertTriangle size={14} strokeWidth={2.5} />
-                </div>
-                <span className="session-name">Style</span>
-              </div>
-              <span className="session-count">4 improvements</span>
-            </div>
+        {!hasKey && (
+          <div className="section-title" style={{ color: '#dc2626' }}>
+            No API key set — checking is off until you add one in Settings.
           </div>
-        </div>
-
-        {/* Action Button */}
-        <button onClick={openOptions} className="btn-primary animate-in delay-4">
-          View Detailed Analysis
-        </button>
+        )}
       </div>
     </div>
   );

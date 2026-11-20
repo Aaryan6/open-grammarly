@@ -10,12 +10,13 @@
   },
   "permissions": [
     "storage",
-    "activeTab",
-    "scripting",
     "contextMenus"
   ],
   "host_permissions": [
-    "<all_urls>"
+    "https://openrouter.ai/*",
+    "https://generativelanguage.googleapis.com/*",
+    "https://docs.google.com/*",
+    "https://*.googleusercontent.com/*"
   ],
   "background": {
     "service_worker": "service-worker-loader.js",
@@ -29,12 +30,13 @@
   "content_scripts": [
     {
       "js": [
-        "assets/index.ts-Dm9loCrz.js"
+        "assets/index.ts-loader-DbmrPd5X.js"
       ],
       "matches": [
         "<all_urls>"
       ],
-      "run_at": "document_idle"
+      "run_at": "document_idle",
+      "all_frames": true
     }
   ],
   "web_accessible_resources": [
@@ -44,7 +46,8 @@
       ],
       "resources": [
         "assets/*",
-        "assets/index.ts-Dm9loCrz.js"
+        "assets/storage-BKXZSGVt.js",
+        "assets/index.ts-Z5TyYiuc.js"
       ],
       "use_dynamic_url": false
     }

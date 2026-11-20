@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { getSettings, saveSettings, Settings, DEFAULT_SETTINGS } from '../lib/storage';
+import { getSettings, saveSettings, Settings, DEFAULT_SETTINGS, GOOGLE_MODELS } from '../lib/storage';
 import { Settings as SettingsIcon, Save, Key, Cpu, BookOpen, Sliders } from 'lucide-react';
 
 export default function Options() {
@@ -9,9 +9,9 @@ export default function Options() {
   useEffect(() => {
     getSettings().then(s => {
       // Ensure the selected model is valid/supported
-      if (s.selectedModel !== 'openai/gpt-oss-safeguard-20b') {
-        s.selectedModel = 'openai/gpt-oss-safeguard-20b';
-        saveSettings({ selectedModel: 'openai/gpt-oss-safeguard-20b' });
+      if (s.selectedModel !== 'openrouter/free') {
+        s.selectedModel = 'openrouter/free';
+        saveSettings({ selectedModel: 'openrouter/free' });
       }
       setSettings(s);
     });
@@ -39,15 +39,6 @@ export default function Options() {
               </div>
               <h1 className="text-2xl font-bold text-gray-900 tracking-tight">Settings</h1>
             </div>
-            {status && (
-              <div className={`px-4 py-2 rounded-full text-sm font-medium animate-fade-in ${
-                status.includes('Error') 
-                  ? 'bg-red-50 text-red-600' 
-                  : 'bg-green-50 text-green-600'
-              }`}>
-                {status}
-              </div>
-            )}
           </div>
           
           <div className="p-8 space-y-10">
@@ -59,6 +50,28 @@ export default function Options() {
               </div>
               
               <div className="grid gap-6">
+                <div className="space-y-2">
+                  <label className="block text-sm font-medium text-gray-700">
+                    AI Provider
+                  </label>
+                  <div className="grid grid-cols-2 gap-3">
+                    {([['openrouter', 'OpenRouter'], ['google', 'Google AI (direct)']] as const).map(([value, label]) => (
+                      <button
+                        key={value}
+                        onClick={() => setSettings({ ...settings, provider: value })}
+                        className={`py-3 px-4 rounded-xl border text-sm font-medium transition-all ${
+                          settings.provider === value
+                            ? 'bg-blue-50 border-blue-200 text-blue-700 ring-1 ring-blue-200'
+                            : 'bg-white border-gray-200 text-gray-600 hover:bg-gray-50'
+                        }`}
+                      >
+                        {label}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+
+                {settings.provider === 'openrouter' ? (<>
                 <div className="space-y-2">
                   <label className="block text-sm font-medium text-gray-700">
                     OpenRouter API Key
@@ -89,7 +102,7 @@ export default function Options() {
                       value={settings.selectedModel}
                       onChange={(e) => setSettings({ ...settings, selectedModel: e.target.value })}
                     >
-                      <option value="openai/gpt-oss-safeguard-20b">GPT OSS Safeguard 20B</option>
+                      <option value="openrouter/free">OpenRouter Free</option>
                     </select>
                     <div className="absolute right-3 top-1/2 -translate-y-1/2 pointer-events-none">
                       <svg className="w-4 h-4 text-gray-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -98,6 +111,35 @@ export default function Options() {
                     </div>
                   </div>
                 </div>
+                </>) : (<>
+                <div className="space-y-2">
+                  <label className="block text-sm font-medium text-gray-700">
+                    Google AI API Key
+                  </label>
+                  <input
+                    type="password"
+                    className="w-full px-4 py-3 bg-gray-50 border border-gray-200 rounded-xl focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 outline-none transition-all text-gray-900 placeholder-gray-400 font-mono text-sm"
+                    placeholder="AIza..."
+                    value={settings.googleKey}
+                    onChange={(e) => setSettings({ ...settings, googleKey: e.target.value })}
+                  />
+                  <p className="text-xs text-gray-500">
+                    Requests go directly to generativelanguage.googleapis.com. Get a key at aistudio.google.com/apikey.
+                  </p>
+                </div>
+                <div className="space-y-2">
+                  <label className="block text-sm font-medium text-gray-700">
+                    Gemini Model
+                  </label>
+                  <select
+                    className="w-full px-4 py-3 bg-gray-50 border border-gray-200 rounded-xl focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 outline-none transition-all text-gray-900"
+                    value={settings.googleModel}
+                    onChange={(e) => setSettings({ ...settings, googleModel: e.target.value })}
+                  >
+                    {GOOGLE_MODELS.map(m => <option key={m} value={m}>{m}</option>)}
+                  </select>
+                </div>
+                </>)}
               </div>
             </section>
 
@@ -136,6 +178,29 @@ export default function Options() {
               <div className="space-y-4 pt-2">
                 <div className="flex items-center justify-between">
                   <label className="block text-sm font-medium text-gray-700">
+                    Check delay after typing
+                  </label>
+                  <span className="px-2.5 py-1 rounded-md bg-gray-100 text-xs font-semibold text-gray-600">
+                    {settings.debounceSeconds}s
+                  </span>
+                </div>
+                <input
+                  type="range"
+                  min="1"
+                  max="15"
+                  step="1"
+                  className="w-full h-2 bg-gray-100 rounded-lg appearance-none cursor-pointer accent-blue-600"
+                  value={settings.debounceSeconds}
+                  onChange={(e) => setSettings({ ...settings, debounceSeconds: parseInt(e.target.value, 10) })}
+                />
+                <p className="text-xs text-gray-500">
+                  How long to wait after you stop typing before checking. Longer delays use fewer API requests, which helps with free-tier limits.
+                </p>
+              </div>
+
+              <div className="space-y-4 pt-2">
+                <div className="flex items-center justify-between">
+                  <label className="block text-sm font-medium text-gray-700">
                     Aggressiveness
                   </label>
                   <span className="px-2.5 py-1 rounded-md bg-gray-100 text-xs font-semibold text-gray-600">
@@ -163,7 +228,16 @@ export default function Options() {
             </section>
 
             {/* Save Button */}
-            <div className="pt-6 border-t border-gray-100 flex justify-end">
+            <div className="pt-6 border-t border-gray-100 flex items-center justify-end gap-4">
+              {status && (
+                <div className={`px-4 py-2 rounded-full text-sm font-medium animate-fade-in ${
+                  status.includes('Error')
+                    ? 'bg-red-50 text-red-600'
+                    : 'bg-green-50 text-green-600'
+                }`}>
+                  {status}
+                </div>
+              )}
               <button 
                 onClick={handleSave}
                 className="flex items-center gap-2 bg-blue-600 hover:bg-blue-700 text-white px-8 py-3 rounded-xl font-medium transition-all transform active:scale-[0.98] shadow-lg shadow-blue-600/25"

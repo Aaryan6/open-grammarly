@@ -119,13 +119,30 @@ export async function analyzeText(text: string, settings: Settings): Promise<Ana
 }
 
 async function analyzeChunk(text: string, settings: Settings): Promise<AnalysisResponse> {
-  const cacheKey = `${settings.selectedModel}:${settings.mode}:${settings.aggressiveness}:${text}`;
+  const model = settings.provider === 'google' ? settings.googleModel : settings.selectedModel;
+  const cacheKey = `${settings.provider}:${model}:${settings.mode}:${settings.aggressiveness}:${text}`;
   const cached = analysisCache.get(cacheKey);
   
   if (cached && (Date.now() - cached.timestamp) < CACHE_TTL) {
     return cached.response;
   }
 
+  const systemPrompt = `${SYSTEM_PROMPT}\nWriting Mode: ${settings.mode}\nAggressiveness: ${settings.aggressiveness}`;
+  const content = settings.provider === 'google'
+    ? await requestGoogle(systemPrompt, text, settings)
+    : await requestOpenRouter(systemPrompt, text, settings);
+
+  try {
+    const parsed = JSON.parse(content) as AnalysisResponse;
+    const validated = validateAndFixCorrections(text, parsed);
+    analysisCache.set(cacheKey, { response: validated, timestamp: Date.now() });
+    return validated;
+  } catch (e) {
+    throw new Error('Invalid response format from AI.');
+  }
+}
+
+async function requestOpenRouter(systemPrompt: string, text: string, settings: Settings): Promise<string> {
   if (!settings.openRouterKey) {
     throw new Error('OpenRouter API key is missing');
   }
@@ -141,14 +158,8 @@ async function analyzeChunk(text: string, settings: Settings): Promise<AnalysisR
     body: JSON.stringify({
       model: settings.selectedModel,
       messages: [
-        {
-          role: 'system',
-          content: `${SYSTEM_PROMPT}\nWriting Mode: ${settings.mode}\nAggressiveness: ${settings.aggressiveness}`
-        },
-        {
-          role: 'user',
-          content: text
-        }
+        { role: 'system', content: systemPrompt },
+        { role: 'user', content: text }
       ],
       response_format: { type: 'json_object' },
       temperature: 0.3,
@@ -161,16 +172,39 @@ async function analyzeChunk(text: string, settings: Settings): Promise<AnalysisR
   }
 
   const data = await response.json();
-  const content = data.choices[0].message.content;
-  
-  try {
-    const parsed = JSON.parse(content) as AnalysisResponse;
-    const validated = validateAndFixCorrections(text, parsed);
-    analysisCache.set(cacheKey, { response: validated, timestamp: Date.now() });
-    return validated;
-  } catch (e) {
-    throw new Error('Invalid response format from AI.');
+  return data.choices[0].message.content;
+}
+
+async function requestGoogle(systemPrompt: string, text: string, settings: Settings): Promise<string> {
+  if (!settings.googleKey) {
+    throw new Error('Google API key is missing');
   }
+
+  const response = await fetch(
+    `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(settings.googleModel)}:generateContent`,
+    {
+      method: 'POST',
+      headers: {
+        'x-goog-api-key': settings.googleKey,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        systemInstruction: { parts: [{ text: systemPrompt }] },
+        contents: [{ role: 'user', parts: [{ text }] }],
+        generationConfig: { temperature: 0.3, responseMimeType: 'application/json' },
+      }),
+    }
+  );
+
+  if (!response.ok) {
+    const errorData = await response.json().catch(() => ({}));
+    throw new Error(errorData.error?.message || `Google API request failed with status ${response.status}`);
+  }
+
+  const data = await response.json();
+  const content = data.candidates?.[0]?.content?.parts?.map((p: { text?: string }) => p.text ?? '').join('');
+  if (!content) throw new Error('Google API returned an empty response.');
+  return content;
 }
 
 function chunkText(text: string, size: number): { text: string, offset: number }[] {

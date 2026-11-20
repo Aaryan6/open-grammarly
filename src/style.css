@@ -299,6 +299,16 @@
   transform: translateY(0);
 }
 
+.btn-primary:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+  transform: none;
+}
+
+.stats-grid .btn-primary {
+  padding: 18px 16px;
+}
+
 /* Animations */
 @keyframes fadeUp {
   from {
