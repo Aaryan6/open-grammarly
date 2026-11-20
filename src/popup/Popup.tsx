@@ -6,6 +6,7 @@ export default function Popup() {
   const [enabled, setEnabled] = useState(true);
   const [runMessage, setRunMessage] = useState('');
   const [hasKey, setHasKey] = useState(true);
+  const [model, setModel] = useState('');
   const [stats, setStats] = useState<{ lastScore: number | null }>({ lastScore: null });
 
   useEffect(() => {
@@ -19,6 +20,7 @@ export default function Popup() {
   useEffect(() => {
     getSettings().then(s => {
       setEnabled(s.enabled);
+      setModel(s.provider === 'google' ? s.googleModel : s.selectedModel);
       setHasKey(!!(s.provider === 'google' ? s.googleKey : s.openRouterKey));
     });
   }, []);
@@ -74,6 +76,8 @@ export default function Popup() {
             aria-label="Toggle service"
           />
         </div>
+
+        <div className="section-title animate-in delay-1">Selected Model: {model}</div>
 
         {/* Stats Grid */}
         <div className="stats-grid animate-in delay-2">

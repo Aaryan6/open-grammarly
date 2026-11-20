@@ -1,4 +1,4 @@
-import { Settings } from './storage';
+import { Settings, GOOGLE_FALLBACK_CHAIN } from './storage';
 import { diff_match_patch } from 'diff-match-patch';
 
 export interface Correction {
@@ -129,11 +129,13 @@ async function analyzeChunk(text: string, settings: Settings): Promise<AnalysisR
 
   const systemPrompt = `${SYSTEM_PROMPT}\nWriting Mode: ${settings.mode}\nAggressiveness: ${settings.aggressiveness}`;
   const content = settings.provider === 'google'
-    ? await requestGoogle(systemPrompt, text, settings)
+    ? await requestGoogleWithFallback(systemPrompt, text, settings)
     : await requestOpenRouter(systemPrompt, text, settings);
 
   try {
     const parsed = JSON.parse(content) as AnalysisResponse;
+    parsed.overallScore ??= 100;
+    parsed.stats ??= { wordCount: text.split(/\s+/).filter(Boolean).length, readabilityScore: 0 };
     const validated = validateAndFixCorrections(text, parsed);
     analysisCache.set(cacheKey, { response: validated, timestamp: Date.now() });
     return validated;
@@ -175,36 +177,86 @@ async function requestOpenRouter(systemPrompt: string, text: string, settings: S
   return data.choices[0].message.content;
 }
 
-async function requestGoogle(systemPrompt: string, text: string, settings: Settings): Promise<string> {
+const GOOGLE_TIMEOUT_MS = 30000;
+
+// Models may wrap JSON in prose or reasoning text; find the first parseable object with a corrections array
+function extractJson(content: string): string | null {
+  const end = content.lastIndexOf('}');
+  for (let i = content.indexOf('{'); i !== -1 && i < end; i = content.indexOf('{', i + 1)) {
+    const candidate = content.slice(i, end + 1);
+    try {
+      if (Array.isArray(JSON.parse(candidate).corrections)) return candidate;
+    } catch {
+      // try next brace
+    }
+  }
+  return null;
+}
+
+async function requestGoogleWithFallback(systemPrompt: string, text: string, settings: Settings): Promise<string> {
+  const start = GOOGLE_FALLBACK_CHAIN.indexOf(settings.googleModel);
+  const models = start === -1
+    ? [settings.googleModel, ...GOOGLE_FALLBACK_CHAIN]
+    : GOOGLE_FALLBACK_CHAIN.slice(start);
+
+  let lastError: unknown;
+  for (const model of models) {
+    try {
+      return await requestGoogle(systemPrompt, text, settings, model);
+    } catch (e) {
+      lastError = e;
+      if (e instanceof Error && e.message === 'Google API key is missing') throw e;
+    }
+  }
+  throw lastError instanceof Error ? lastError : new Error('All Google models failed.');
+}
+
+async function requestGoogle(systemPrompt: string, text: string, settings: Settings, model: string): Promise<string> {
   if (!settings.googleKey) {
     throw new Error('Google API key is missing');
   }
 
+  // Gemma doesn't reliably support JSON response mode; JSON is extracted from the text instead
+  const isGemma = model.startsWith('gemma');
+  const body = {
+    systemInstruction: { parts: [{ text: systemPrompt }] },
+    contents: [{ role: 'user', parts: [{ text }] }],
+    generationConfig: isGemma
+      ? { temperature: 0.3 }
+      : { temperature: 0.3, responseMimeType: 'application/json' },
+  };
+
   const response = await fetch(
-    `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(settings.googleModel)}:generateContent`,
+    `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}:generateContent`,
     {
       method: 'POST',
       headers: {
         'x-goog-api-key': settings.googleKey,
         'Content-Type': 'application/json',
       },
-      body: JSON.stringify({
-        systemInstruction: { parts: [{ text: systemPrompt }] },
-        contents: [{ role: 'user', parts: [{ text }] }],
-        generationConfig: { temperature: 0.3, responseMimeType: 'application/json' },
-      }),
+      body: JSON.stringify(body),
+      signal: AbortSignal.timeout(GOOGLE_TIMEOUT_MS),
     }
-  );
+  ).catch((e) => {
+    if (e?.name === 'TimeoutError') throw new Error(`${model}: timed out after ${GOOGLE_TIMEOUT_MS / 1000}s`);
+    throw e;
+  });
 
   if (!response.ok) {
     const errorData = await response.json().catch(() => ({}));
-    throw new Error(errorData.error?.message || `Google API request failed with status ${response.status}`);
+    throw new Error(`${model}: ${errorData.error?.message || `Google API request failed with status ${response.status}`}`);
   }
 
   const data = await response.json();
-  const content = data.candidates?.[0]?.content?.parts?.map((p: { text?: string }) => p.text ?? '').join('');
-  if (!content) throw new Error('Google API returned an empty response.');
-  return content;
+  const content = data.candidates?.[0]?.content?.parts
+    ?.filter((p: { thought?: boolean }) => !p.thought)
+    .map((p: { text?: string }) => p.text ?? '')
+    .join('');
+  if (!content) throw new Error(`${model}: Google API returned an empty response.`);
+  console.debug(`[Open Grammarly] ${model} raw response:`, content);
+  const json = extractJson(content);
+  if (!json) throw new Error(`${model}: response contained no valid JSON with corrections.`);
+  return json;
 }
 
 function chunkText(text: string, size: number): { text: string, offset: number }[] {

@@ -1,6 +1,21 @@
 export type Provider = 'openrouter' | 'google';
 
-export const GOOGLE_MODELS = ['gemini-3.5-flash-lite', 'gemini-3.6-flash', 'gemini-3.8-flash'];
+export const GOOGLE_MODELS = [
+  'gemini-3.5-flash-lite',
+  'gemini-3.1-flash-lite',
+  'gemma-4-26b-a4b-it',
+  'gemma-4-31b-it',
+  'gemini-3.6-flash',
+  'gemini-3.8-flash',
+];
+
+// Tried in this order when a request fails, starting after the selected model
+export const GOOGLE_FALLBACK_CHAIN = [
+  'gemini-3.5-flash-lite',
+  'gemini-3.1-flash-lite',
+  'gemma-4-26b-a4b-it',
+  'gemma-4-31b-it',
+];
 
 export interface Settings {
   provider: Provider;
