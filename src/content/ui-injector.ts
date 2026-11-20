@@ -55,7 +55,7 @@ export class UIInjector {
     if (this.currentTooltip) this.closeTooltip();
     
     // Clear existing visual elements
-    this.shadowRoot.querySelectorAll('.og-underline, .og-textarea-badge').forEach(el => el.remove());
+    this.shadowRoot.querySelectorAll('.og-underline').forEach(el => el.remove());
     
     // Re-render all active corrections with updated positions
     this.activeElements.forEach((data, elementId) => {
@@ -167,27 +167,10 @@ export class UIInjector {
         opacity: 0.7;
       }
       
-      .og-textarea-badge {
-        position: absolute;
-        background: #2563eb;
-        color: white;
-        border-radius: 50%;
-        width: 24px;
-        height: 24px;
-        display: flex;
-        align-items: center;
-        justify-content: center;
-        font-size: 12px;
-        font-weight: bold;
-        pointer-events: auto;
-        cursor: pointer;
-        z-index: 10;
-        box-shadow: 0 2px 8px rgba(0,0,0,0.3);
-      }
       
       .og-toast {
         position: fixed;
-        bottom: 20px;
+        bottom: 76px;
         right: 20px;
         background: #1f2937;
         color: white;
@@ -281,7 +264,7 @@ export class UIInjector {
 
   private clearHighlights(element: HTMLElement) {
     const elementId = this.getElementId(element);
-    this.shadowRoot.querySelectorAll(`.og-underline[data-element-id="${elementId}"], .og-textarea-badge[data-element-id="${elementId}"]`).forEach(el => el.remove());
+    this.shadowRoot.querySelectorAll(`.og-underline[data-element-id="${elementId}"]`).forEach(el => el.remove());
   }
 
   private getElementId(element: HTMLElement): string {
@@ -326,8 +309,6 @@ export class UIInjector {
 
   private renderTextareaBadge(element: HTMLTextAreaElement | HTMLInputElement, corrections: Correction[], onApply: (c: Correction) => void) {
     const elementId = this.getElementId(element);
-    const rect = element.getBoundingClientRect();
-    
     if (corrections.length === 0) return;
 
     corrections.forEach(correction => {
@@ -347,20 +328,6 @@ export class UIInjector {
         this.shadowRoot.appendChild(underline);
       });
     });
-
-    const badge = document.createElement('div');
-    badge.className = 'og-textarea-badge';
-    badge.dataset.elementId = elementId;
-    badge.style.left = `${rect.right - 30}px`;
-    badge.style.top = `${rect.bottom - 30}px`;
-    badge.textContent = corrections.length.toString();
-    
-    badge.onmouseenter = (e) => {
-      e.stopPropagation();
-      this.showTooltip(element, corrections[0], rect.left, rect.bottom, onApply);
-    };
-
-    this.shadowRoot.appendChild(badge);
   }
 
   // Measures text positions in a textarea/input by rendering the same text in a hidden mirror element

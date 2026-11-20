@@ -82,7 +82,7 @@ export default function Popup() {
             <div className="stat-label">Writing Score</div>
           </div>
           <button onClick={runAnalysisNow} disabled={!enabled} className="btn-primary">
-            Run Analysis
+            Check Grammar
           </button>
         </div>
         {runMessage && <div className="section-title">{runMessage}</div>}

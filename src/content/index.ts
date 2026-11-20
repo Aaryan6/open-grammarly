@@ -8,12 +8,54 @@ const analyzedFields = new Set<TextField>();
 const ui = new UIInjector();
 let applying = false;
 let lastFocused: TextField | null = null;
+let checkButton: HTMLElement | null = null;
+let badge: HTMLElement | null = null;
+
+function setBadge(count: number | 'loading' | null) {
+  if (!badge) return;
+  const loading = count === 'loading';
+  badge.textContent = loading || count === null ? '' : String(count);
+  badge.classList.toggle('spin', loading);
+  badge.style.display = count === null ? 'none' : 'block';
+}
+
+const isGoogleDoc = location.hostname === 'docs.google.com'
+  && /^\/(document|spreadsheets|presentation)\/d\//.test(location.pathname);
+
+// Floating button (top frame only) to launch the analysis manually; Google Docs has its own panel
+function showCheckButton() {
+  if (checkButton || isGoogleDoc || window !== window.top) return;
+  const host = document.createElement('div');
+  host.style.cssText = 'position:fixed;right:16px;bottom:16px;z-index:2147483647;';
+  const root = host.attachShadow({ mode: 'closed' });
+  root.innerHTML = `<style>
+    button { background:#15c39a; color:#fff; border:0; border-radius:999px; padding:10px 16px; font:600 13px system-ui,sans-serif; box-shadow:0 2px 8px rgba(0,0,0,.3); cursor:pointer; }
+    .badge.spin { color:transparent; border-color:#15c39a; border-top-color:#d6f5ee; animation:og-spin .8s linear infinite; }
+    @keyframes og-spin { to { transform:rotate(360deg); } }
+    .wrap { position:relative; display:inline-block; }
+    .badge { position:absolute; top:-6px; right:-6px; min-width:20px; height:20px; padding:0 5px; border-radius:999px; background:#fff; color:#202124; border:2px solid #15c39a; font:700 11px/16px system-ui,sans-serif; text-align:center; box-sizing:border-box; display:none; }
+  </style><div class="wrap"><button>Check Grammar</button><span class="badge"></span></div>`;
+  badge = root.querySelector<HTMLElement>('.badge');
+  const button = root.querySelector('button')!;
+  // Keep focus in the text field so it stays the analysis target
+  button.addEventListener('mousedown', (e) => e.preventDefault());
+  button.addEventListener('click', () => {
+    const result = runAnalysisNow();
+    if (!result) ui.showToast('Click into a text field first.', 'error');
+    else if (!result.started) ui.showToast('Write a bit more text first.', 'error');
+  });
+  document.documentElement.appendChild(host);
+  checkButton = host;
+}
 
 function handleInput(event: Event) {
   const target = event.target as TextField;
   
   // Clear highlights on user edits, but keep them when we applied a suggestion ourselves
-  if (!applying) ui.highlightCorrections(target, [], () => {});
+  if (!applying) {
+    ui.highlightCorrections(target, [], () => {});
+    setBadge(null);
+  }
   
   analyzeField(target);
 }
@@ -23,6 +65,7 @@ function handlePaste(event: Event) {
   
   // Clear highlights and analyze after paste completes
   ui.highlightCorrections(target, [], () => {});
+  setBadge(null);
   
   // Small delay to let paste complete
   setTimeout(() => analyzeField(target), 100);
@@ -35,6 +78,7 @@ async function analyzeField(target: TextField) {
 
   if (text.length < 5) {
     ui.highlightCorrections(target, [], () => {}); // Clear highlights
+    setBadge(null);
     return;
   }
 
@@ -57,18 +101,25 @@ async function analyzeField(target: TextField) {
 
 async function runAnalysis(target: TextField, text: string) {
   let response: any;
+  setBadge('loading');
   try {
     response = await chrome.runtime.sendMessage({ type: 'ANALYZE_TEXT', text });
   } catch {
+    setBadge(null);
     return; // Extension was reloaded or service worker unavailable
   }
-  if (!response) return;
+  if (!response) {
+    setBadge(null);
+    return;
+  }
 
   if (response.success) {
     ui.highlightCorrections(target, response.data.corrections, (correction) => {
       applyCorrection(target, correction);
     });
+    setBadge(response.data.corrections.length);
   } else {
+    setBadge(null);
     // Show toast notification for errors
     if (response.error?.includes('API key')) {
       ui.showToast('API key not configured', 'error', {
@@ -98,6 +149,7 @@ function applyCorrection(target: TextField, correction: Correction) {
     .filter(c => c.end <= correction.start || c.start >= correction.end)
     .map(c => c.start >= correction.end ? { ...c, start: c.start + delta, end: c.end + delta } : c);
   ui.highlightCorrections(target, remaining, (c) => applyCorrection(target, c));
+  setBadge(remaining.length);
 }
 
 function replaceText(target: TextField, correction: Correction): boolean {
@@ -195,23 +247,25 @@ function findTextNodeAtPosition(element: HTMLElement, start: number, end: number
   return null;
 }
 
+function runAnalysisNow(): { started: boolean; reason?: string } | null {
+  const active = document.activeElement as HTMLElement | null;
+  const focused = active && isTextField(active) ? active : lastFocused;
+  if (!focused || !document.contains(focused)) return null; // Only the frame holding a field responds
+  const text = focused instanceof HTMLInputElement || focused instanceof HTMLTextAreaElement
+    ? focused.value
+    : focused.innerText;
+  if (text.length < 5) return { started: false, reason: 'short' };
+  const timeoutId = (focused as any)._analysisTimeout;
+  if (timeoutId) clearTimeout(timeoutId);
+  (focused as any)._analysisCall = ((focused as any)._analysisCall ?? 0) + 1;
+  runAnalysis(focused as TextField, text);
+  return { started: true };
+}
+
 chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
   if (request.type === 'RUN_ANALYSIS_NOW') {
-    const active = document.activeElement as HTMLElement | null;
-    const focused = active && isTextField(active) ? active : lastFocused;
-    if (!focused || !document.contains(focused)) return; // Only the frame holding a field responds
-    const text = focused instanceof HTMLInputElement || focused instanceof HTMLTextAreaElement
-      ? focused.value
-      : focused.innerText;
-    if (text.length < 5) {
-      sendResponse({ started: false, reason: 'short' });
-      return;
-    }
-    const timeoutId = (focused as any)._analysisTimeout;
-    if (timeoutId) clearTimeout(timeoutId);
-    (focused as any)._analysisCall = ((focused as any)._analysisCall ?? 0) + 1;
-    runAnalysis(focused as TextField, text);
-    sendResponse({ started: true });
+    const result = runAnalysisNow();
+    if (result) sendResponse(result);
     return;
   }
 });
@@ -228,6 +282,7 @@ observeDOM((el) => {
   el.addEventListener('paste', handlePaste);
   el.addEventListener('focus', () => {
     lastFocused = el;
+    showCheckButton();
     analyzeField(el);
   });
   analyzedFields.add(el);

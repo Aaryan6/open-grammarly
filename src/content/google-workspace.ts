@@ -131,14 +131,24 @@ export function initGoogleWorkspace(
       .sug { color:#188038; font-weight:600; }
       .exp { color:#5f6368; margin:4px 0; }
       .copy { border:1px solid #15c39a; color:#0b8a6c; background:#fff; border-radius:6px; padding:3px 8px; font-size:11px; }
+      .badge.spin { color:transparent; border-color:#15c39a; border-top-color:#d6f5ee; animation:og-spin .8s linear infinite; }
+      @keyframes og-spin { to { transform:rotate(360deg); } }
+      .wrap { position:relative; display:inline-block; }
+      .badge { position:absolute; top:-6px; right:-6px; min-width:20px; height:20px; padding:0 5px; border-radius:999px; background:#fff; color:#202124; border:2px solid #15c39a; font:700 11px/16px system-ui,sans-serif; text-align:center; box-sizing:border-box; display:none; }
       .msg { color:#5f6368; padding:8px 0; }
     </style>
     <div class="panel"><div class="head"><span>Open Grammarly</span><button class="close" title="Close">×</button></div><div class="body"></div></div>
-    <button class="fab">Check document</button>`;
+    <div class="wrap"><button class="fab">Check Grammar</button><span class="badge"></span></div>`;
 
   const panel = root.querySelector('.panel') as HTMLElement;
   const body = root.querySelector('.body') as HTMLElement;
   const fab = root.querySelector('.fab') as HTMLButtonElement;
+  const badge = root.querySelector('.badge') as HTMLElement;
+  const setBadge = (n: number | 'loading' | null) => {
+    badge.textContent = n === null || n === 'loading' ? '' : String(n);
+    badge.classList.toggle('spin', n === 'loading');
+    badge.style.display = n === null ? 'none' : 'block';
+  };
   root.querySelector('.close')!.addEventListener('click', () => panel.classList.remove('open'));
 
   const message = (text: string) => {
@@ -190,6 +200,7 @@ export function initGoogleWorkspace(
     panel.classList.add('open');
     message('Reading document…');
     fab.disabled = true;
+    setBadge('loading');
     try {
       let text = await fetchDocText(info);
       if (text.trim().length < 5) return message('Nothing to check yet.');
@@ -200,6 +211,7 @@ export function initGoogleWorkspace(
       const res = await analyze(text);
       if (!res.success) return message(res.error || 'Analysis failed');
       render(res.data!.corrections);
+      setBadge(res.data!.corrections.length);
       if (truncated) {
         const note = document.createElement('div');
         note.className = 'msg';
@@ -210,6 +222,7 @@ export function initGoogleWorkspace(
       message(e?.message || 'Something went wrong');
     } finally {
       fab.disabled = false;
+      if (badge.classList.contains('spin')) setBadge(null);
     }
   });
 

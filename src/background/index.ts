@@ -14,7 +14,7 @@ chrome.runtime.onInstalled.addListener(() => {
 
 chrome.contextMenus.onClicked.addListener((info, tab) => {
   if (info.menuItemId === 'analyzeSelection' && tab?.id != null) {
-    // Same path as the popup's Run Analysis button; the focused field in the page is analyzed
+    // Same path as the popup's Check Grammar button; the focused field in the page is analyzed
     chrome.tabs.sendMessage(tab.id, { type: 'RUN_ANALYSIS_NOW' }).catch(() => {});
   }
 });
